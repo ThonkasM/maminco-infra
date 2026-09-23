@@ -1,0 +1,13 @@
+# Copy to ../maminco-frontend/.dockerignore (the build context is the app repo).
+node_modules
+.next
+out
+coverage
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+Dockerfile*
+README*.md

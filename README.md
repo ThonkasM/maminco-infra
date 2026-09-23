@@ -54,6 +54,7 @@ maminco-infra/
 │   ├── backend.Dockerfile
 │   ├── ai.Dockerfile
 │   └── frontend.Dockerfile
+│   └── *.dockerignore        # copy into each app repo to shrink build context
 ├── deploy/
 │   ├── ec2-setup.sh          # first-boot: docker, clone repos, .env, compose up
 │   └── ec2-update.sh         # redeploy a single service
@@ -87,6 +88,11 @@ development/
 
 Compose builds each app with `context: ../maminco-<app>` and the Dockerfile
 from `docker/` in this repo, so **the app repositories stay untouched**.
+
+> **Build speed tip:** Docker sends the whole build context (including
+> `node_modules`) unless a `.dockerignore` exists in the app repo. Copy the
+> ready-made files from `docker/*.dockerignore` into each app repo to speed
+> builds up dramatically.
 
 Open <http://localhost>. The first admin user is created with
 `POST /api/auth/register-first-admin` (only works while no users exist).
