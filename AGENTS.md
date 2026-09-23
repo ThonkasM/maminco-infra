@@ -30,8 +30,11 @@ Routes: `/` → frontend, `/api` → backend, `/socket.io` → backend (WebSocke
 - `INTERNAL_SERVICE_TOKEN` (backend) **==** `AI_INTERNAL_SERVICE_TOKEN` (ai).
 - `NEXT_PUBLIC_API_URL` / `NEXT_PUBLIC_SOCKET_URL` are **build-time** args and
   are **origins only** (no trailing slash, no `/api`).
-- Postgres schema bootstrap uses `prisma db push` — there are no committed
-  migrations. Seed (`prisma db seed`) must stay idempotent.
+- Postgres schema bootstrap uses `prisma migrate deploy` (migrations are
+  committed); seed (`prisma db seed`) must stay idempotent.
+- Container logs use the `json-file` driver with rotation (`10m` × `3`); the
+  backend additionally persists app logs to Postgres with a 3-day retention.
+  See `docs/LOGGING.md`.
 - Frontend requires a Node server (middleware); it is **not** static.
 
 ## Commands

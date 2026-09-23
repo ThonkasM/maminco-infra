@@ -14,6 +14,13 @@
 
 name: maminco
 
+# Rotate container logs so they can't fill the small EC2 disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # ---------------------------------------------------------------------------
   # PostgreSQL 16 — persistent data + healthcheck gating the backend.
@@ -21,6 +28,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-maminco}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maminco}
@@ -44,14 +52,14 @@ services:
 
   # ---------------------------------------------------------------------------
   # Backend — NestJS + Prisma + socket.io (port 3000, internal only).
-  # On boot: apply the schema (db push) + run the idempotent seed, then start.
-  # There are no committed Prisma migrations yet, hence `prisma db push`.
+  # On boot: apply committed migrations + run the idempotent seed, then start.
   # ---------------------------------------------------------------------------
   backend:
     build:
       context: ../maminco-backend
       dockerfile: ../maminco-infra/docker/backend.Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - path: .env
         required: false
@@ -67,7 +75,7 @@ services:
     # Push schema + seed, then start. Seed is idempotent (see prisma/seed.ts).
     command: >
       sh -c "
-        npx prisma db push --skip-generate &&
+        npx prisma migrate deploy &&
         npx prisma db seed &&
         node dist/main
       "
@@ -98,6 +106,7 @@ services:
       context: ../maminco-ai
       dockerfile: ../maminco-infra/docker/ai.Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - path: .env
         required: false
@@ -136,6 +145,7 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost}
         NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:-http://localhost}
     restart: unless-stopped
+    logging: *default-logging
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: "3001"
@@ -163,6 +173,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "80:80"
       # Uncomment after mounting certs for TLS (see docs/DEPLOYMENT.md).
