@@ -133,7 +133,7 @@ services:
       - maminco
 
   # ---------------------------------------------------------------------------
-  # Frontend — Next.js 16 (App Router). Uses middleware, so it is served by a
+  # Frontend — Next.js 16 (App Router). Uses a proxy (Next 16), so it is served by a
   # Node process (`next start` on 3001), never as static S3/CloudFront only.
   # NEXT_PUBLIC_* are baked at build time and passed as build args.
   # ---------------------------------------------------------------------------

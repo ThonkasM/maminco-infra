@@ -8,7 +8,7 @@ Participants:
 
 - **Browser** — POS terminal or admin UI (React client)
 - **nginx** — reverse proxy on port 80
-- **Frontend** — Next.js server (SSR + `middleware.ts`)
+- **Frontend** — Next.js server (SSR + `proxy.ts`)
 - **Backend** — NestJS API (`/api/*`) + socket.io gateway
 - **Postgres** — single database
 - **AI** — FastAPI forecasting service
@@ -48,7 +48,7 @@ sequenceDiagram
     end
 ```
 
-Protected navigations (admin + POS prefixes) are guarded by `middleware.ts`,
+Protected navigations (admin + POS prefixes) are guarded by `proxy.ts`,
 which reads the `token` cookie and redirects to `/auth/login?from=...` when it
 is missing. Authorization by role is enforced server-side with `@Roles(...)`.
 

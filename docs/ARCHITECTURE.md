@@ -63,7 +63,7 @@ flowchart TB
 
 - **nginx** — TLS termination (when configured), gzip, body size limit,
   WebSocket upgrade, single public port.
-- **frontend** — Next.js Node server. Required because `middleware.ts` guards
+- **frontend** — Next.js Node server. Required because `proxy.ts` guards
   admin/POS routes; a static export would break auth redirects.
 - **backend** — REST API under `/api`, JWT auth + role guards, socket.io
   gateways for orders/payments, calls the AI service.

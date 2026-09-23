@@ -4,7 +4,7 @@
 # Build context: ../maminco-frontend   (the app repo; keeps it untouched)
 #   docker build -f docker/frontend.Dockerfile ../maminco-frontend
 #
-# NOTE: the app uses middleware.ts, so it must be served by a Node process
+# NOTE: the app uses proxy.ts, so it must be served by a Node process
 # (`next start`). It is NOT exported statically and cannot live on S3 alone.
 # NEXT_PUBLIC_* variables are compiled into the client bundle at build time.
 # =============================================================================
