@@ -1,0 +1,33 @@
+# =============================================================================
+# Example Terraform variables — copy to terraform.tfvars and edit.
+#   cp terraform.tfvars.example terraform.tfvars
+# terraform.tfvars is git-ignored so your values stay local.
+# =============================================================================
+
+aws_region  = "us-east-1"
+project_name = "maminco"
+environment  = "prod"
+
+# --- Compute (cheap defaults) ------------------------------------------------
+# t4g.small  -> ARM/Graviton, ~$12/mo  (keep instance_architecture = "arm64")
+# t3.micro   -> x86_64, free-tier eligible (set instance_architecture = "x86_64")
+instance_type          = "t4g.small"
+instance_architecture  = "arm64"
+root_volume_size       = 20
+
+# --- Access ------------------------------------------------------------------
+# Existing EC2 key pair. Leave commented to use SSM Session Manager only.
+# key_name         = "my-ec2-key"
+
+# IMPORTANT: lock this down to your own IP, e.g. "198.51.100.7/32".
+allowed_ssh_cidr = "0.0.0.0/0"
+
+enable_elastic_ip = true
+
+# --- Repositories to clone at first boot -------------------------------------
+repo_base_url = "https://github.com/ThonkasM"
+git_branch    = "main"
+
+# --- Optional static CDN (leave off: the frontend needs a Node server) --------
+enable_static_cdn     = false
+cloudfront_price_class = "PriceClass_100"

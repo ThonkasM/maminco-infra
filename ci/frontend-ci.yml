@@ -1,0 +1,44 @@
+# =============================================================================
+# TEMPLATE — copy to maminco-frontend/.github/workflows/ci.yml
+# =============================================================================
+#   mkdir -p ../maminco-frontend/.github/workflows
+#   cp ci/frontend-ci.yml ../maminco-frontend/.github/workflows/ci.yml
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-build:
+    runs-on: ubuntu-latest
+
+    env:
+      # Public values must be present at build time (Next.js inlines them).
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:3000
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build

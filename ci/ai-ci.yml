@@ -1,0 +1,64 @@
+# =============================================================================
+# TEMPLATE — copy to maminco-ai/.github/workflows/ci.yml
+# =============================================================================
+#   mkdir -p ../maminco-ai/.github/workflows
+#   cp ci/ai-ci.yml ../maminco-ai/.github/workflows/ci.yml
+#
+# Assumes requirements.txt (runtime) and requirements-dev.txt (pytest, ruff…).
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ai-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # A throwaway Postgres for AI feature/DB access tests.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: maminco_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      AI_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maminco_ai_test
+      AI_INTERNAL_SERVICE_TOKEN: ci-internal-service-token
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Lint (ruff, if configured)
+        run: |
+          if command -v ruff >/dev/null 2>&1 && [ -f pyproject.toml ]; then ruff check .; else echo "ruff not configured, skipping"; fi
+
+      - name: Test
+        run: pytest -q

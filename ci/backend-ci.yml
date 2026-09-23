@@ -1,0 +1,72 @@
+# =============================================================================
+# TEMPLATE — copy to maminco-backend/.github/workflows/ci.yml
+# =============================================================================
+# This file lives in maminco-infra for reference. GitHub only runs workflows
+# found in the repository that contains the code, so copy it into the backend
+# repo and commit it there:
+#
+#   mkdir -p ../maminco-backend/.github/workflows
+#   cp ci/backend-ci.yml ../maminco-backend/.github/workflows/ci.yml
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    # A throwaway Postgres so tests that touch the DB can run.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: maminco_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/maminco_test?schema=public
+      JWT_SECRET: ci-secret-key-with-at-least-32-characters-long
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply schema
+        run: npx prisma db push --skip-generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
