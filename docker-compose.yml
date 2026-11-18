@@ -39,7 +39,7 @@ x-db-url: &db-url postgresql://${POSTGRES_USER:-maminco}:${POSTGRES_PASSWORD:?Se
 services:
   postgres:
     <<: *hardening
-    image: postgres:16.11-alpine3.23
+    image: postgres:18.7-alpine3.23
     cap_add:
       - CHOWN
       - DAC_OVERRIDE
