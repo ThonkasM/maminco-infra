@@ -278,3 +278,6 @@ see the public AWS price pages.
 - nginx config is bind-mounted but compose must rebuild/recreate (`docker compose up -d --build nginx`) after edits.
 - Pending real-environment check: a logged-in socket.io session through CloudFront (the raw handshake behaves
   the same at the origin and through CloudFront).
+- nginx (443 site) takes the real client IP from the last `X-Forwarded-For` hop added by CloudFront, so per-IP rate limits apply per user; the origin is only reachable from CloudFront (security group + `X-Origin-Verify`).
+- Insights: OpenCode Go requires the `x-opencode-session` header (sent by the backend). Secrets (`OPENCODE_API_KEY`, VAPID keys) live only in the instance `.env`.
+- Verified in production: socket.io `orders` and `payments` namespaces connect with an authenticated WebSocket through CloudFront.
