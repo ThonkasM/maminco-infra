@@ -29,7 +29,7 @@ if [ "$${SWAP_SIZE_MB}" -gt 0 ] && [ ! -f /swapfile ]; then
 fi
 
 dnf update -y
-dnf install -y docker git curl tar
+dnf install -y docker git tar
 
 # -----------------------------------------------------------------------------
 # 2. Data volume: wait for the attachment, format only if empty, mount at /data
@@ -67,7 +67,7 @@ systemctl enable --now docker
 # -----------------------------------------------------------------------------
 # 4. Docker Compose CLI plugin — pinned version, checksum verified
 # -----------------------------------------------------------------------------
-case "$$(uname -m)" in
+case "$(uname -m)" in
     aarch64) COMPOSE_ARCH="aarch64" ;;
     x86_64)  COMPOSE_ARCH="x86_64" ;;
     *)       echo "Unsupported architecture"; exit 1 ;;
@@ -80,6 +80,11 @@ curl -fsSL \
 echo "$${COMPOSE_SHA256}  /tmp/docker-compose" | sha256sum -c -
 install -m 0755 /tmp/docker-compose /usr/libexec/docker/cli-plugins/docker-compose
 rm -f /tmp/docker-compose
+BUILDX_ARCH="arm64"
+[ "$${COMPOSE_ARCH}" = "x86_64" ] && BUILDX_ARCH="amd64"
+curl -fsSL "https://github.com/docker/buildx/releases/download/v0.19.3/buildx-v0.19.3.linux-$${BUILDX_ARCH}" \
+    -o /usr/libexec/docker/cli-plugins/docker-buildx
+chmod 0755 /usr/libexec/docker/cli-plugins/docker-buildx
 docker compose version
 
 usermod -aG docker ec2-user || true
