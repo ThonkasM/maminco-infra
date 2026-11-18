@@ -184,7 +184,7 @@ services:
 
   nginx:
     <<: *hardening
-    image: nginx:1.28.0-alpine
+    image: nginx:1.31.0-alpine
     cap_add:
       - CHOWN
       - SETGID
