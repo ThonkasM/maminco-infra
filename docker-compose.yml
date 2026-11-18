@@ -219,7 +219,7 @@ services:
       - edge
 
   certbot:
-    image: certbot/certbot:v4.0.0
+    image: certbot/certbot:v5.10.0
     profiles:
       - certbot
     init: true
