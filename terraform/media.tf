@@ -19,7 +19,7 @@ resource "random_id" "media_suffix" {
 resource "aws_s3_bucket" "media" {
   count         = var.enable_media_bucket ? 1 : 0
   bucket        = "${var.project_name}-${var.environment}-media-${random_id.media_suffix[0].hex}"
-  force_destroy = false
+  force_destroy = true
 
   tags = { Name = "${var.project_name}-${var.environment}-media" }
 }

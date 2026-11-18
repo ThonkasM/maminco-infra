@@ -256,3 +256,16 @@ Notes: nginx's per-IP rate limits see CloudFront addresses (the real client is i
 hosted zone (monthly fee), DNS queries, CloudFront requests and data transfer, ACM is free;
 see the public AWS price pages.
 
+
+## Teardown and updates (quick reference)
+
+- **Remove everything Maminco from AWS:** `./deploy/teardown.sh` (asks for `DELETE-maminco`; empties the media
+  bucket, lifts `prevent_destroy`, runs `terraform destroy` and lists any resource still tagged
+  `Project=maminco`, which must print nothing). Every resource carries `Project=maminco`, so it never touches
+  other projects in the account.
+- **Ship a fix:** push to `main` in the owning repo, then on the instance
+  `./deploy/ec2-update.sh backend|frontend|ai|all` (`aws ssm start-session --target <instance_id>`). The frontend
+  rebuilds because `NEXT_PUBLIC_*` are build-time.
+- **Current state (first deploy):** HTTP on the Elastic IP, `enable_cdn_and_dns=false`. When `maminco.lat`
+  is ready, follow the CDN/DNS section above and update `.env` (`CORS_ORIGIN`, `NEXT_PUBLIC_*`, `DOMAIN`), then
+  `./deploy/ec2-update.sh all`.
