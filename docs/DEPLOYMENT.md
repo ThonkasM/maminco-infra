@@ -269,3 +269,12 @@ see the public AWS price pages.
 - **Current state (first deploy):** HTTP on the Elastic IP, `enable_cdn_and_dns=false`. When `maminco.lat`
   is ready, follow the CDN/DNS section above and update `.env` (`CORS_ORIGIN`, `NEXT_PUBLIC_*`, `DOMAIN`), then
   `./deploy/ec2-update.sh all`.
+
+### Notes from the first production deploy (maminco.lat)
+
+- Hosted zone created in the console and reused (`create_hosted_zone=false`, `hosted_zone_id`); `.lat` is not
+  registrable through Route 53, so NS were delegated at the external registrar.
+- Amazon Linux 2023 has no cron: certificate renewal is the systemd timer `maminco-certbot.timer` (daily 03:17 UTC).
+- nginx config is bind-mounted but compose must rebuild/recreate (`docker compose up -d --build nginx`) after edits.
+- Pending real-environment check: a logged-in socket.io session through CloudFront (the raw handshake behaves
+  the same at the origin and through CloudFront).
