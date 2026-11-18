@@ -120,6 +120,19 @@ services:
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env (openssl rand -hex 32)}
       AI_SERVICE_URL: http://ai:8000
       REPORT_TIMEZONE: ${REPORT_TIMEZONE:-America/La_Paz}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      ASSETS_BASE_URL: ${ASSETS_BASE_URL:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+      LLM_PROVIDERS: ${LLM_PROVIDERS:-}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      OPENCODE_BASE_URL: ${OPENCODE_BASE_URL:-}
+      OPENCODE_CHAT_PATH: ${OPENCODE_CHAT_PATH:-}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
