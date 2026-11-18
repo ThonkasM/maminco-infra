@@ -1,0 +1,7 @@
+# HTTP-only override for local development / first certificate issuance:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# (or: make up-dev). Serves everything on http://localhost without TLS.
+services:
+  nginx:
+    volumes:
+      - ./nginx/templates/http.conf.template:/etc/nginx/templates/default.conf.template:ro

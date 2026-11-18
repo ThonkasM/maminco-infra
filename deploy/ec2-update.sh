@@ -20,7 +20,7 @@ APP_DIR="${APP_DIR:-/opt/maminco}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 INFRA_DIR="${APP_DIR}/maminco-infra"
 
-# service -> owning repository
+# service -> owning repository (migrate runs automatically before the backend)
 declare -A REPO_FOR_SERVICE=(
     [backend]=maminco-backend
     [frontend]=maminco-frontend
@@ -71,6 +71,12 @@ else
     REPO="${REPO_FOR_SERVICE[${SERVICE}]:-}"
     [ -n "${REPO}" ] || usage
     pull_repo "${REPO}"
+
+    if [ "${SERVICE}" = "backend" ]; then
+        log "Applying database migrations..."
+        ${COMPOSE} build migrate
+        ${COMPOSE} run --rm migrate
+    fi
 
     log "Rebuilding service '${SERVICE}'..."
     # --build rebuilds the image for this service; --force-recreate swaps it in.

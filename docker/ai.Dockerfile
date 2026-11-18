@@ -1,55 +1,43 @@
 # syntax=docker/dockerfile:1
 # =============================================================================
-# maminco-ai — FastAPI ML service (uvicorn app.main:app)
-# Build context: ../maminco-ai   (the app repo; keeps it untouched)
+# maminco-ai — FastAPI forecasting service (single source of truth)
+# Build context: ../maminco-ai (the app repo has no Dockerfile of its own)
 #   docker build -f docker/ai.Dockerfile ../maminco-ai
 #
-# Assumes the standard layout: requirements.txt, app/main.py and an optional
-# requirements-dev.txt (dev/test only).
+# All runtime dependencies ship as binary wheels (pinned in requirements.txt),
+# so no compiler toolchain is installed.
+#
+# Base image pinning: the tag is fixed. To pin by digest as well, pass
+#   --build-arg PYTHON_DIGEST=sha256:<digest>
 # =============================================================================
+ARG PYTHON_VERSION=3.12.12-slim-bookworm
+ARG PYTHON_DIGEST=
 
-# --- build stage: produce a self-contained virtualenv -----------------------
-FROM python:3.11-slim AS builder
-
+FROM python:${PYTHON_VERSION}${PYTHON_DIGEST:+@${PYTHON_DIGEST}} AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONDONTWRITEBYTECODE=1
-
-WORKDIR /app
-
-# Build deps for wheels that need to compile (numpy/scipy/pandas, etc.).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
+    PIP_NO_CACHE_DIR=1
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-
 COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --only-binary=:all: -r requirements.txt
 
-# --- runtime stage -----------------------------------------------------------
-FROM python:3.11-slim AS runner
-
+FROM python:${PYTHON_VERSION}${PYTHON_DIGEST:+@${PYTHON_DIGEST}} AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
-    PORT=8000
-
+    AI_MODEL_DIR=/app/data/models
 WORKDIR /app
-
-# libgomp1 is commonly needed by scikit-learn / xgboost style wheels.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
+    && apt-get install -y --no-install-recommends tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --no-create-home appuser \
+    && mkdir -p /app/data/models \
+    && chown -R appuser:appuser /app/data
 COPY --from=builder /opt/venv /opt/venv
-
-# Non-root service account.
-RUN useradd --create-home --uid 10001 appuser
-COPY --chown=appuser:appuser . .
+COPY --chown=appuser:appuser app ./app
 USER appuser
-
 EXPOSE 8000
-
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
+ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

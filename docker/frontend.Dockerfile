@@ -1,59 +1,49 @@
 # syntax=docker/dockerfile:1
 # =============================================================================
-# maminco-frontend — Next.js 16 (App Router)
-# Build context: ../maminco-frontend   (the app repo; keeps it untouched)
+# maminco-frontend — Next.js 16 (App Router), `output: 'standalone'`
+# Build context: ../maminco-frontend (the app repo)
 #   docker build -f docker/frontend.Dockerfile ../maminco-frontend
 #
-# NOTE: the app uses proxy.ts, so it must be served by a Node process
-# (`next start`). It is NOT exported statically and cannot live on S3 alone.
-# NEXT_PUBLIC_* variables are compiled into the client bundle at build time.
+# Requires `output: 'standalone'` in next.config.ts (the app owns that).
+# NEXT_PUBLIC_* values are inlined into the browser bundle at BUILD time and
+# must be origins only (no trailing slash, no /api).
+#
+# Base image pinning: the tag is fixed. To pin by digest as well, pass
+#   --build-arg NODE_DIGEST=sha256:<digest>
 # =============================================================================
+ARG NODE_VERSION=22.22-alpine3.23
+ARG NODE_DIGEST=
 
-# --- deps / build stage ------------------------------------------------------
-FROM node:22-alpine AS builder
+FROM node:${NODE_VERSION}${NODE_DIGEST:+@${NODE_DIGEST}} AS base
 WORKDIR /app
+RUN apk add --no-cache libc6-compat tini
 
-RUN apk add --no-cache libc6-compat
-
-# Build-time public configuration (inlined into the JS bundle).
-ARG NEXT_PUBLIC_API_URL=http://localhost
-ARG NEXT_PUBLIC_SOCKET_URL=http://localhost
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
-    NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL \
-    NEXT_TELEMETRY_DISABLED=1
-
+FROM base AS deps
 COPY package.json package-lock.json ./
 RUN npm ci
 
+FROM deps AS build
+ARG NEXT_PUBLIC_API_URL=http://localhost
+ARG NEXT_PUBLIC_SOCKET_URL=http://localhost
+ARG NEXT_PUBLIC_SITE_URL=http://localhost
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL \
+    NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
+    NEXT_TELEMETRY_DISABLED=1
 COPY . .
 RUN npm run build
 
-# --- runtime stage -----------------------------------------------------------
-FROM node:22-alpine AS runner
-WORKDIR /app
-
+FROM base AS runtime
 ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
     PORT=3001 \
-    NEXT_TELEMETRY_DISABLED=1
-
-RUN apk add --no-cache libc6-compat
-
-# Same public config at runtime (some server components may read it).
-ARG NEXT_PUBLIC_API_URL=http://localhost
-ARG NEXT_PUBLIC_SOCKET_URL=http://localhost
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
-    NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
-
-# Copy the installed deps + build output + public assets + config.
-# (No `output: "standalone"` is configured in the app, so we ship node_modules.)
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/next.config.ts ./next.config.ts
-
+    HOSTNAME=0.0.0.0
+COPY --from=build --chown=node:node /app/public ./public
+COPY --from=build --chown=node:node /app/.next/standalone ./
+COPY --from=build --chown=node:node /app/.next/static ./.next/static
 USER node
-
 EXPOSE 3001
-
-CMD ["npm", "run", "start"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD node -e "require('http').get({host:'127.0.0.1',port:process.env.PORT||3001,path:'/',timeout:4000},r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+ENTRYPOINT ["/sbin/tini", "-s", "--"]
+CMD ["node", "server.js"]

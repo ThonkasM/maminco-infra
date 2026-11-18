@@ -15,12 +15,18 @@ instance_type          = "t4g.small"
 instance_architecture  = "arm64"
 root_volume_size       = 20
 
+# --- Data + backups ----------------------------------------------------------
+data_volume_size      = 20
+backup_retention_days = 7
+swap_size_mb          = 1024
+
 # --- Access ------------------------------------------------------------------
 # Existing EC2 key pair. Leave commented to use SSM Session Manager only.
 # key_name         = "my-ec2-key"
 
-# IMPORTANT: lock this down to your own IP, e.g. "198.51.100.7/32".
-allowed_ssh_cidr = "0.0.0.0/0"
+# SSH is closed unless you set this to your own IP (0.0.0.0/0 is rejected).
+# Preferred: leave it commented and use SSM Session Manager (see outputs).
+# allowed_ssh_cidr = "198.51.100.7/32"
 
 enable_elastic_ip = true
 
@@ -31,3 +37,14 @@ git_branch    = "main"
 # --- Optional static CDN (leave off: the frontend needs a Node server) --------
 enable_static_cdn     = false
 cloudfront_price_class = "PriceClass_100"
+
+# --- Public domain: Route 53 + CloudFront in front of the host ------------------
+# 1) Register maminco.lat. 2) First apply with enable_cdn_and_dns = true creates the
+# hosted zone; copy `name_servers` to the registrar; the ACM validation waits until
+# the delegation propagates (see docs/DEPLOYMENT.md §11).
+enable_cdn_and_dns = false
+domain_name        = "maminco.lat"
+create_hosted_zone = true
+# hosted_zone_id   = "Z0123456789ABC"   # only when create_hosted_zone = false
+# openssl rand -hex 32 (same value as ORIGIN_VERIFY_SECRET in the host .env)
+# origin_verify_secret = "change-me-32-chars-or-more"

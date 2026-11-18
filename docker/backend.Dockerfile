@@ -1,47 +1,55 @@
 # syntax=docker/dockerfile:1
 # =============================================================================
 # maminco-backend — NestJS + Prisma + socket.io
-# Build context: ../maminco-backend   (the app repo; keeps it untouched)
-#   docker build -f docker/backend.Dockerfile ../maminco-backend
+# Build context: ../maminco-backend (the app repo)
+#   docker build -f docker/backend.Dockerfile --target runtime ../maminco-backend
+#   docker build -f docker/backend.Dockerfile --target migrate ../maminco-backend
+#
+# Targets:
+#   runtime  production server (prod dependencies only, non-root, tini)
+#   migrate  one-shot job: prisma migrate deploy, seed only when SEED=true
+#
+# Base image pinning: the tag is fixed. To pin by digest as well, resolve it
+# with `docker buildx imagetools inspect node:<tag>` and pass
+#   --build-arg NODE_DIGEST=sha256:<digest>
 # =============================================================================
+ARG NODE_VERSION=22.22-alpine3.23
+ARG NODE_DIGEST=
 
-# --- deps / build stage ------------------------------------------------------
-FROM node:22-alpine AS builder
+FROM node:${NODE_VERSION}${NODE_DIGEST:+@${NODE_DIGEST}} AS base
 WORKDIR /app
+RUN apk add --no-cache openssl tini
 
-# openssl is required by the Prisma query engine on Alpine.
-RUN apk add --no-cache openssl
-
-# Install dependencies first for better layer caching.
+FROM base AS deps
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Generate the Prisma client against the app schema, then compile.
+FROM deps AS build
 COPY . .
 RUN npx prisma generate && npm run build
 
-# --- runtime stage -----------------------------------------------------------
-FROM node:22-alpine AS runner
-WORKDIR /app
-
+FROM base AS prod-deps
 ENV NODE_ENV=production
-RUN apk add --no-cache openssl
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-# Copy the fully-installed node_modules (dev deps included on purpose: the
-# container needs the prisma CLI + ts-node to run `prisma db push`/`db seed`
-# on first boot).
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
-COPY --from=builder /app/tsconfig.json ./tsconfig.json
-COPY --from=builder /app/prisma ./prisma
-
-# Run as the non-root `node` user shipped with the base image.
-RUN chown -R node:node /app
+FROM build AS migrate
+ENV NODE_ENV=production \
+    SEED=false
 USER node
+ENTRYPOINT ["/sbin/tini", "-s", "--"]
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && if [ \"$SEED\" = \"true\" ]; then node_modules/.bin/prisma db seed; fi"]
 
+FROM base AS runtime
+ENV NODE_ENV=production \
+    PORT=3000
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node package.json ./
+USER node
 EXPOSE 3000
-
-# Overridden by docker-compose to run `prisma db push` + `db seed` first.
-CMD ["node", "dist/main"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
+    CMD node -e "require('http').get({host:'127.0.0.1',port:process.env.PORT||3000,path:'/',timeout:4000},r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"
+ENTRYPOINT ["/sbin/tini", "-s", "--"]
+CMD ["node", "dist/main.js"]

@@ -1,12 +1,16 @@
 # =============================================================================
 # TEMPLATE — copy to maminco-backend/.github/workflows/ci.yml
 # =============================================================================
-# This file lives in maminco-infra for reference. GitHub only runs workflows
-# found in the repository that contains the code, so copy it into the backend
-# repo and commit it there:
+# GitHub only runs workflows found in the repository that holds the code, so
+# this file lives here for reference. Also copy dependabot-backend.yml to
+# maminco-backend/.github/dependabot.yml.
 #
 #   mkdir -p ../maminco-backend/.github/workflows
 #   cp ci/backend-ci.yml ../maminco-backend/.github/workflows/ci.yml
+#   cp ci/dependabot-backend.yml ../maminco-backend/.github/dependabot.yml
+#
+# Action versions use the major tag; tools that publish no major tag
+# (hadolint-action, trivy-action) are pinned to an exact release.
 # =============================================================================
 name: CI
 
@@ -14,21 +18,22 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
-# Cancel superseded runs on the same ref.
 concurrency:
   group: backend-ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
-    # A throwaway Postgres so tests that touch the DB can run.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:16.11-alpine3.23
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -46,27 +51,75 @@ jobs:
       JWT_SECRET: ci-secret-key-with-at-least-32-characters-long
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Apply committed migrations
+        run: npx prisma migrate deploy
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:e2e
+      - run: npm run build
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
-      - name: Generate Prisma client
-        run: npx prisma generate
+  trivy-fs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
 
-      - name: Apply schema
-        run: npx prisma db push --skip-generate
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Checkout infra repo (single source of the Dockerfile)
+        uses: actions/checkout@v7
+        with:
+          repository: ThonkasM/maminco-infra
+          path: infra
+          token: ${{ secrets.REPOS_READ_TOKEN || github.token }}
+      - uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: infra/docker/backend.Dockerfile
+          config: infra/.hadolint.yaml
+      - name: Build runtime and migrate targets
+        run: |
+          docker build -f infra/docker/backend.Dockerfile --target runtime -t maminco/backend:ci .
+          docker build -f infra/docker/backend.Dockerfile --target migrate -t maminco/backend-migrate:ci .
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: maminco/backend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
+  codeql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v4

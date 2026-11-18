@@ -44,8 +44,8 @@ de las apps**.
 
 ```bash
 cp .env.example .env      # 1. Copia el archivo de variables
-vi .env                   # 2. Cambia JWT_SECRET e INTERNAL_SERVICE_TOKEN
-make up                   # 3. Construye y arranca todo
+vi .env                   # 2. Rellena los secretos vacíos (openssl rand -hex 32, uno distinto por variable)
+make up-dev               # 3. Construye y arranca todo en HTTP (make up = TLS, ver docs/DEPLOYMENT.md)
 make ps                   # 4. Ver estado
 make logs SERVICE=backend # 5. Ver logs de un servicio
 ```
@@ -63,15 +63,18 @@ usuario).
 | `make logs` | Sigue los logs (`SERVICE=backend` para uno solo) |
 | `make ps` | Muestra el estado de los contenedores |
 | `make rebuild` | Reconstruye imágenes y recrea contenedores |
-| `make seed` | Ejecuta el seed de Prisma en el backend |
+| `make seed` | Migra y ejecuta el seed (usuarios de prueba; nunca en producción) |
+| `make up-dev` | Arranca el stack solo con HTTP (desarrollo) |
 | `make tf-up` | Crea/actualiza la infraestructura en AWS |
 | `make tf-destroy` | Destruye toda la infraestructura |
 | `make deploy` | Reconstruye y levanta con verificación de salud |
 
 ## 5. Variables de entorno (lo mínimo)
 
-- `JWT_SECRET`: **obligatorio**, mínimo 32 caracteres.
-  Genéralo con `openssl rand -base64 48`.
+- `POSTGRES_PASSWORD`, `JWT_SECRET`, `INTERNAL_SERVICE_TOKEN`, `AI_DB_PASSWORD`:
+  **obligatorios y sin valor por defecto** (Compose no arranca si faltan).
+  Genera cada uno con `openssl rand -hex 32`. `JWT_SECRET` e
+  `INTERNAL_SERVICE_TOKEN` requieren mínimo 32 caracteres.
 - `INTERNAL_SERVICE_TOKEN`: secreto compartido entre backend e IA.
   ⚠️ **Debe ser idéntico** al `AI_INTERNAL_SERVICE_TOKEN` de la IA. En Compose
   se deriva solo desde `INTERNAL_SERVICE_TOKEN`.

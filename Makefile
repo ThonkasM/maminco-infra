@@ -11,7 +11,7 @@ TF_DIR  := terraform
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env up down logs ps rebuild seed build restart psql tf-init tf-up tf-destroy deploy
+.PHONY: help env up up-dev down logs ps rebuild seed build restart psql tf-init tf-up tf-destroy deploy
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -20,8 +20,11 @@ help: ## Show this help
 env: ## Create .env from .env.example if missing
 	@test -f .env || (cp .env.example .env && echo "Created .env — edit it before deploying!")
 
-up: env ## Start the full stack in the background
-	$(COMPOSE) up -d
+up: env ## Start the full stack (TLS site) in the background
+	$(COMPOSE) up -d --build
+
+up-dev: env ## Start the stack in HTTP-only mode (development)
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 down: ## Stop the stack (keeps the postgres volume)
 	$(COMPOSE) down
@@ -41,8 +44,8 @@ rebuild: ## Rebuild images and recreate containers
 restart: ## Restart all services
 	$(COMPOSE) restart
 
-seed: ## Run the Prisma seed inside the running backend
-	$(COMPOSE) exec backend npx prisma db seed
+seed: ## Run migrations + seed once (test data; never on a real tenant)
+	SEED=true $(COMPOSE) run --rm migrate
 
 psql: ## Open a psql shell inside the postgres container
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
@@ -56,8 +59,6 @@ tf-up: tf-init ## Provision/refresh the EC2 infra
 tf-destroy: ## Tear down all provisioned infra
 	terraform -chdir=$(TF_DIR) destroy -auto-approve
 
-deploy: ## Local deploy: rebuild stack, wait for health, seed
-	$(COMPOSE) up -d --build
-	@echo "Waiting for services to become healthy..."
-	@sleep 15
+deploy: ## Rebuild the stack and wait until every service is healthy
+	$(COMPOSE) up -d --build --wait
 	$(COMPOSE) ps

@@ -1,0 +1,13 @@
+# Accepted findings. Each entry MUST carry a reason and be reviewed on change.
+# Public ingress on 80/443 is the point of the single-host deployment.
+AVD-AWS-0107
+# Egress open to the internet: needed for package installs, image pulls, ACME.
+AVD-AWS-0104
+# The single public subnet must auto-assign public IPs (no NAT gateway by design).
+AVD-AWS-0164
+# Optional CloudFront CDN (disabled by default): WAF/logging not worth the cost.
+AVD-AWS-0011
+AVD-AWS-0010
+# Customer-managed KMS keys are out of budget; AWS-managed encryption is used.
+AVD-AWS-0132
+AVD-AWS-0066

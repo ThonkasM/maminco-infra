@@ -1,15 +1,18 @@
 # Deployment
 
 Step-by-step guide to deploy Maminco to a single low-cost EC2 instance, plus
-rollback and teardown.
+TLS, backups, rollback and teardown.
 
 ## 0. Prerequisites
 
 - AWS account + credentials configured (`aws configure`, or `AWS_PROFILE`)
-- Terraform ≥ 1.5
-- SSH key pair in the target region (optional — SSM works without one)
+- Terraform >= 1.5 (>= 1.10 if you use the S3 native state lock)
+- A DNS name you control, pointing to the instance (needed for TLS)
 - Network access to clone the four GitHub repos
-- The app repos (`maminco-backend`, `maminco-frontend`, `maminco-ai`) exist
+- The app repos exist; the frontend sets `output: 'standalone'` in
+  `next.config.ts` and the backend honours `trust proxy` / shutdown hooks
+
+SSH is optional: SSM Session Manager works without any key or open port.
 
 ## 1. Provision the infrastructure (Terraform)
 
@@ -20,155 +23,173 @@ cp terraform.tfvars.example terraform.tfvars
 
 Edit `terraform.tfvars`:
 
-- `aws_region` — pick one close to your users
-- `instance_type` — `t4g.small` (default) or `t3.micro` (free tier)
-- `instance_architecture` — `arm64` for `t4g.*`, `x86_64` for `t3.*`
-- `key_name` — your EC2 key pair (or leave unset and use SSM)
-- `allowed_ssh_cidr` — **restrict to your IP** (`x.x.x.x/32`)
+- `aws_region`, `instance_type` (`t4g.small` default, `t3.micro` free tier) and
+  `instance_architecture` (`arm64` for `t4g.*`, `x86_64` for `t3.*`)
+- `allowed_ssh_cidr` — leave unset for **no SSH rule** (use SSM). Set it to
+  your own `x.x.x.x/32` only if you need SSH; `0.0.0.0/0` is rejected.
+- `key_name` — only if you use SSH
+- `data_volume_size`, `backup_retention_days` (default 7), `swap_size_mb`
 - `repo_base_url` / `git_branch` — used to clone repos at first boot
 
-Then:
+Optional remote state: `cp backend.tf.example backend.tf`, create the bucket as
+described in that file, then `terraform init -migrate-state`.
 
 ```bash
 terraform init
 terraform apply
 ```
 
-Terraform creates: VPC, public subnet, Internet Gateway, route table, security
-group (22/80/443), IAM role + SSM instance profile, the EC2 instance, an
-Elastic IP, and — only if `enable_static_cdn = true` — an S3 bucket + CloudFront
-distribution.
+Terraform creates: VPC + public subnet + IGW, security group (80/443, SSH only
+if allowed), IAM role + SSM profile, the EC2 instance (IMDSv2 required,
+encrypted root disk), a **separate encrypted data EBS volume**
+(`prevent_destroy`), a DLM policy that snapshots it daily, an Elastic IP, and
+(only if `enable_static_cdn = true`) a versioned, encrypted S3 bucket +
+CloudFront.
 
-Note the outputs:
+Outputs: `public_ip`, `app_url`, `ssm_command`, `ssh_command`, `data_volume_id`,
+`backup_policy_id`.
 
-```
-app_url         = "http://<elastic-ip>"
-public_ip       = "<elastic-ip>"
-ssh_command     = "ssh -i <key>.pem ec2-user@<ip>"
-ssm_command     = "aws ssm start-session --target i-... "
-```
+Notes:
+
+- The instance ignores later `ami` / `user_data` changes: a newer AMI never
+  recreates the host. To rebuild it deliberately:
+  `terraform apply -replace=aws_instance.app` (the data volume is re-attached
+  and keeps the database).
+- `terraform destroy` fails on the data volume by design (`prevent_destroy`).
+  To really delete it, remove that lifecycle block first.
 
 ## 2. First-boot provisioning (`user_data.sh`)
 
-On boot, `user_data.sh` (rendered by Terraform) automatically:
+Runs once. It: creates a swap file, waits for the data volume, formats it (only
+if empty) and mounts it at `/data`, points Docker's `data-root` to
+`/data/docker` (so the Postgres volume and certificates live on the data disk),
+installs a **pinned Docker Compose** release verified by SHA-256, and clones the
+four repos into `/opt/maminco/`.
 
-1. installs Docker + the Compose v2 plugin,
-2. adds `ec2-user` to the `docker` group,
-3. clones the four repos into `/opt/maminco/`.
+Watch progress: `aws ssm start-session ...` then
+`sudo tail -f /var/log/cloud-init-output.log`.
 
-Watch progress: `ssh ec2-user@<ip> 'sudo tail -f /var/log/cloud-init-output.log'`.
+To bump Compose, change `compose_version` and the two `compose_sha256_*`
+variables (checksums come from the release's `.sha256` assets) and the matching
+constants in `deploy/ec2-setup.sh`.
 
 ## 3. Configure the environment
 
-SSH (or SSM) into the instance and edit `.env`:
-
 ```bash
-ssh -i <key>.pem ec2-user@<ip>
 cd /opt/maminco/maminco-infra
-cp .env.example .env
-vi .env
+cp .env.example .env && chmod 600 .env
 ```
 
-Set at least:
+Secrets are empty on purpose and have **no default**; compose aborts until all
+are set. Generate each one separately:
+
+```bash
+openssl rand -hex 32   # POSTGRES_PASSWORD, JWT_SECRET, INTERNAL_SERVICE_TOKEN, AI_DB_PASSWORD
+```
+
+Then set the public values:
 
 ```dotenv
-POSTGRES_PASSWORD=<strong-db-password>
-JWT_SECRET=<openssl rand -base64 48>
-INTERNAL_SERVICE_TOKEN=<openssl rand -hex 32>
-CORS_ORIGIN=http://<elastic-ip>
-NEXT_PUBLIC_API_URL=http://<elastic-ip>
-NEXT_PUBLIC_SOCKET_URL=http://<elastic-ip>
+DOMAIN=pos.example.com
+CORS_ORIGIN=https://pos.example.com
+NEXT_PUBLIC_API_URL=https://pos.example.com
+NEXT_PUBLIC_SOCKET_URL=https://pos.example.com
+NEXT_PUBLIC_SITE_URL=https://pos.example.com
 ```
 
-`INTERNAL_SERVICE_TOKEN` is automatically reused as `AI_INTERNAL_SERVICE_TOKEN`
-by Compose. The `NEXT_PUBLIC_*` values are **build-time**, so they must be
-correct before the first build.
+`NEXT_PUBLIC_*` are **build-time**: they must be right before the first build.
+`deploy/ec2-setup.sh` (with `PUBLIC_HOST=pos.example.com`) does all of this,
+generating the four secrets with `openssl`.
 
-> If you use `deploy/ec2-setup.sh` with `PUBLIC_HOST=<ip-or-domain>`, it fills
-> `NEXT_PUBLIC_*` and `CORS_ORIGIN` for you after copying the template.
+## 4. Build and start (HTTP first, to get a certificate)
 
-## 4. Build and start
+nginx's default site needs certificates, so the first start is HTTP-only:
 
 ```bash
-cd /opt/maminco/maminco-infra
-make up            # docker compose up -d --build
+make up-dev        # docker-compose.yml + docker-compose.dev.yml
 make ps
 make logs SERVICE=backend
 ```
 
-What happens on first boot: `postgres` becomes healthy → `backend` runs
-`prisma db push` (creates the schema — no migrations are committed) and
-`prisma db seed` (idempotent), then starts → `frontend` and `ai` start → `nginx`
-serves port 80.
+What happens: `postgres` healthy (first init creates the read-only `maminco_ai`
+role) -> `migrate` runs `prisma migrate deploy` and exits 0 -> `backend` starts
+-> `frontend` -> `nginx`. `ai` starts in parallel. The seed does **not** run
+unless `SEED=true` (it creates well-known test users: never on a real tenant).
 
 ## 5. Bootstrap the first admin user
 
-While no users exist:
-
 ```bash
-curl -X POST http://<elastic-ip>/api/auth/register-first-admin \
+curl -X POST http://localhost/api/auth/register-first-admin \
   -H 'Content-Type: application/json' \
-  -d '{"email":"admin@maminco.local","password":"<strong-password>","name":"Admin"}'
+  -d '{"email":"admin@example.com","password":"<strong-password>","name":"Admin"}'
 ```
 
-Then open <http://<elastic-ip>> and log in. (Adjust the body to match the DTO
-in `maminco-backend`.)
+(Adjust the body to the DTO in `maminco-backend`.)
 
 ## 6. Redeploy a single service
-
-On the instance:
 
 ```bash
 cd /opt/maminco/maminco-infra
 ./deploy/ec2-update.sh backend     # or: frontend | ai | all
 ```
 
-This pulls the service's repo and rebuilds only that container with
-`--force-recreate --no-deps`, then restarts nginx.
+Pulls the service's repo and rebuilds only that container. For `backend` it
+first runs the one-shot `migrate` service. Add `SEED=true` only deliberately.
 
-From CI, prefer building an image and pushing to ECR; for this project the
-on-instance `git pull && compose up --build` flow is the cheapest and simplest.
+## 7. Rollback and backups
 
-## 7. Rollback
-
-Because images are built locally, roll back by reverting the code and
-rebuilding:
+Images are built on the host, so roll back by reverting the code and rebuilding:
 
 ```bash
-# On the instance, for a single service:
-cd /opt/maminco/maminco-backend
-git log --oneline -5                 # find the last good commit
-git checkout <good-commit>
+cd /opt/maminco/maminco-backend && git checkout <good-commit>
 cd /opt/maminco/maminco-infra
-docker compose up -d --build --force-recreate --no-deps backend
+docker compose build backend migrate && docker compose run --rm migrate
+docker compose up -d --force-recreate --no-deps backend
 ```
 
-To roll back the whole stack to a known commit per repo, repeat for each repo
-and run `docker compose up -d --build`.
+Migrations are forward-only (`migrate deploy`); a code rollback that needs an
+older schema requires restoring a backup.
 
-Database safety:
+**Automatic backups:** AWS DLM snapshots the data volume daily (07:00 UTC,
+`backup_retention_days` kept). Snapshots are crash-consistent; Postgres
+recovers via WAL. To restore: create a volume from a snapshot, stop the stack,
+swap the attached volume (or `terraform import` the new one) and start again.
 
-- **Schema changes** are applied by `prisma db push`, which does **not** create
-  migrations and can drop columns that no longer exist. Before risky deploys:
-  ```bash
-  docker compose exec postgres \
-    pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > ~/backup-$(date +%F).sql
-  ```
-- To restore: `cat backup.sql | docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"`.
+**Logical backup** before risky changes:
 
-Infrastructure rollback: use `terraform` state / version control; for a full
-rebuild, `terraform destroy && terraform apply` (this deletes the instance and
-its EBS data — back up first).
+```bash
+docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > ~/backup-$(date +%F).sql
+cat backup.sql | docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
 
-## 8. Optional: TLS / HTTPS
+Existing volume created before the read-only AI role existed? Run
+`docker compose exec -e AI_DB_PASSWORD=... postgres sh /docker-entrypoint-initdb.d/10-ai-readonly.sh`.
 
-1. Point a domain at the Elastic IP.
-2. Obtain certificates (e.g. certbot) and place them in `nginx/certs/`.
-3. Uncomment the `443` port mapping and the certs volume in
-   `docker-compose.yml`, and add a `listen 443 ssl;` server block in
-   `nginx/default.conf`.
-4. Set `NEXT_PUBLIC_*` and `CORS_ORIGIN` to the `https://` URL and rebuild the
-   frontend (`./deploy/ec2-update.sh frontend`).
+## 8. TLS (Let's Encrypt with certbot)
+
+Prerequisites: DNS `A` record for `DOMAIN` -> `public_ip`; ports 80/443 open.
+
+1. Start in HTTP mode (step 4: `make up-dev`). nginx serves
+   `/.well-known/acme-challenge/` from the shared `acme-webroot` volume.
+2. Issue the certificate (stored in the `letsencrypt` volume):
+
+   ```bash
+   docker compose --profile certbot run --rm certbot certonly \
+     --webroot -w /var/www/certbot -d "$DOMAIN" \
+     --email you@example.com --agree-tos --no-eff-email
+   ```
+3. Switch to the TLS site: `make up` (same as
+   `docker compose up -d --build`). Port 80 now only redirects to HTTPS and
+   answers `/healthz`; HSTS and the security headers are sent.
+4. Renewal (certificates last 90 days). Add to root's crontab:
+
+   ```cron
+   17 3 * * * cd /opt/maminco/maminco-infra && docker compose --profile certbot run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload
+   ```
+5. Make sure `CORS_ORIGIN` and `NEXT_PUBLIC_*` use the `https://` origin and the
+   frontend was rebuilt (`./deploy/ec2-update.sh frontend`).
+
+Use `--staging` with certbot while testing to avoid Let's Encrypt rate limits.
 
 ## 9. Teardown
 
@@ -177,18 +198,61 @@ cd terraform
 terraform destroy
 ```
 
-This removes all Terraform-managed resources. If `enable_static_cdn = true`,
-the S3 bucket is created with `force_destroy = true`, so its contents are
-deleted too. The `pgdata` volume lives on the instance's EBS volume and is
-destroyed with the instance.
+Fails on the data volume (`prevent_destroy`) unless you remove that guard;
+snapshots created by DLM are not deleted with the volume. The optional S3
+bucket is created with `force_destroy = false`: empty it first.
 
 ## 10. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | ------- | ------------ | --- |
-| `make up` fails on backend | missing/invalid `JWT_SECRET` (< 32 chars) | fix `.env`, `make rebuild` |
-| Browser network errors | wrong `NEXT_PUBLIC_API_URL` (localhost) | set public origin, rebuild frontend |
-| AI returns 401 to backend | token mismatch | ensure `INTERNAL_SERVICE_TOKEN` == `AI_INTERNAL_SERVICE_TOKEN` |
-| Tables missing | `prisma db push` did not run | `make logs SERVICE=backend`; `make rebuild` |
-| `permission denied` on docker | user not in `docker` group | re-login, or use `sudo docker compose` |
-| Port 80 unreachable | security group / nginx down | check SG ingress + `docker compose ps` |
+| `docker compose` says `required variable ... is missing` | empty secret in `.env` | `openssl rand -hex 32` and set it |
+| `migrate` exits non-zero | DB unreachable or a failed migration | `docker compose logs migrate` |
+| nginx restarts: `cannot load certificate` | TLS site without a certificate | `make up-dev`, issue the cert (§8) |
+| Browser network errors | wrong `NEXT_PUBLIC_API_URL` | set the public origin, rebuild frontend |
+| AI exits at boot (`internal_service_token`) | token missing, < 32 chars or placeholder | fix `INTERNAL_SERVICE_TOKEN` |
+| AI returns 401 to backend | token mismatch | compose derives both from `INTERNAL_SERVICE_TOKEN`; recreate both |
+| AI cannot read tables | role created before tables, volume pre-dates the script | run the init script manually (§7) |
+| Containers OOM-killed | 2 GiB host | check `docker stats`, swap, limits in compose |
+| `permission denied` on docker | user not in `docker` group | re-login, or `sudo docker compose` |
+
+## 11. Public domain: Route 53 + CloudFront (`maminco.lat`)
+
+Topology: `Browser -> Route 53 -> CloudFront (app) -> origin.maminco.lat (EC2 / nginx, HTTPS)`;
+`media.maminco.lat -> CloudFront (media) -> S3 products/`. CloudFront is a CDN and
+reverse proxy, **not** a load balancer: there is still a single origin.
+
+1. **Register** `maminco.lat` at a registrar (not done by Terraform).
+2. In `terraform.tfvars`: `enable_cdn_and_dns = true`, `domain_name = "maminco.lat"`,
+   `origin_verify_secret = "$(openssl rand -hex 32)"` (and `enable_media_bucket = true` if used).
+3. **Create the zone first** so you can delegate it:
+
+   ```bash
+   terraform apply -target=aws_route53_zone.main
+   terraform output name_servers
+   ```
+4. At the registrar, set the four `name_servers` as the domain's NS (delegation). Wait until
+   `dig NS maminco.lat +short` returns them (minutes to hours).
+5. `terraform apply`. The ACM certificates (us-east-1) validate by DNS records created in the
+   zone; the apply waits until they are issued, then creates the distributions and the alias
+   records for the apex, `www` and `media`. CloudFront takes several minutes to deploy.
+6. On the host `.env`: `DOMAIN=origin.maminco.lat`, `ORIGIN_VERIFY_SECRET=<same secret>`,
+   `CORS_ORIGIN=https://maminco.lat`, `NEXT_PUBLIC_API_URL=https://maminco.lat`
+   (and the other `NEXT_PUBLIC_*` with that origin), `ASSETS_BASE_URL=https://media.maminco.lat`
+   (value of `media_base_url`). Rebuild the frontend.
+7. Issue the origin certificate (§8) for `origin.maminco.lat` (the A record to the Elastic IP
+   already exists; port 80 stays open for the ACME challenge). Then `make up`.
+   Security group: 443 is only open to the CloudFront origin-facing managed prefix list,
+   and nginx answers 403 without the `X-Origin-Verify` header.
+
+First-deploy checklist: NS delegated; certificates `ISSUED`; `https://maminco.lat` and
+`https://www.maminco.lat` load; `/api/...` and a socket.io connection work through CloudFront
+(WebSocket support must be verified in the real environment); `/_next/static/*` returns
+`x-cache: Hit from cloudfront` on the second request; a product image loads from
+`https://media.maminco.lat`; `reports/` returns 403 from the CDN; direct `https://<ip>` is refused.
+
+Notes: nginx's per-IP rate limits see CloudFront addresses (the real client is in
+`X-Forwarded-For` / `CloudFront-Viewer-Address`); tune before relying on them. Cost drivers:
+hosted zone (monthly fee), DNS queries, CloudFront requests and data transfer, ACM is free;
+see the public AWS price pages.
+

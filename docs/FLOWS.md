@@ -7,7 +7,7 @@ and `.../payments/payments.gateway.ts` for the exact strings.
 Participants:
 
 - **Browser** — POS terminal or admin UI (React client)
-- **nginx** — reverse proxy on port 80
+- **nginx** — reverse proxy, TLS on 443 (HTTP only in dev)
 - **Frontend** — Next.js server (SSR + `proxy.ts`)
 - **Backend** — NestJS API (`/api/*`) + socket.io gateway
 - **Postgres** — single database

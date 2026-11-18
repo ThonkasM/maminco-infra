@@ -1,35 +1,71 @@
-# =============================================================================
-# CI for the maminco-infra repository itself.
-# Validates the compose file and the Terraform configuration.
-# =============================================================================
 name: Infra CI
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 concurrency:
   group: infra-ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Create .env for compose interpolation
-        run: cp .env.example .env
+      - name: Compose env with throwaway CI values
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "INTERNAL_SERVICE_TOKEN=$(openssl rand -hex 32)"
+            echo "AI_DB_PASSWORD=$(openssl rand -hex 16)"
+            echo "CORS_ORIGIN=http://localhost"
+            echo "NEXT_PUBLIC_API_URL=http://localhost"
+            echo "NEXT_PUBLIC_SOCKET_URL=http://localhost"
+            echo "NEXT_PUBLIC_SITE_URL=http://localhost"
+          } > .env
 
-      - name: Validate docker compose
-        run: docker compose config --quiet
+      - name: Validate docker compose (TLS and dev override)
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Secrets have no fallback
+        run: |
+          rm .env
+          if docker compose config --quiet 2>/dev/null; then
+            echo "compose must fail without mandatory secrets" >&2
+            exit 1
+          fi
+
+      - name: Lint Dockerfiles
+        run: |
+          for f in docker/*.Dockerfile; do
+            echo "hadolint $f"
+            docker run --rm -i -v "$PWD/.hadolint.yaml:/.hadolint.yaml:ro" \
+              hadolint/hadolint:v2.12.0 hadolint --config /.hadolint.yaml - < "$f"
+          done
+
+      - name: Validate nginx configuration
+        run: |
+          docker run --rm \
+            -e DOMAIN=example.test \
+            -v "$PWD/nginx/conf.d/00-common.conf:/etc/nginx/conf.d/00-common.conf:ro" \
+            -v "$PWD/nginx/snippets:/etc/nginx/snippets:ro" \
+            -v "$PWD/nginx/templates/http.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+            --add-host backend:127.0.0.1 --add-host frontend:127.0.0.1 \
+            nginx:1.28.0-alpine nginx -t
+
+      - uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: "1.7.5"
+          terraform_version: "~> 1.14"
 
       - name: Terraform fmt
         run: terraform -chdir=terraform fmt -check -recursive
@@ -39,3 +75,113 @@ jobs:
 
       - name: Terraform validate
         run: terraform -chdir=terraform validate
+
+      - uses: terraform-linters/setup-tflint@v6
+
+      - name: tflint
+        working-directory: terraform
+        run: |
+          tflint --init
+          tflint
+
+      - name: Shell syntax
+        run: |
+          bash -n deploy/ec2-setup.sh
+          bash -n deploy/ec2-update.sh
+          sh -n docker/postgres/10-ai-readonly.sh
+
+  trivy-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Trivy IaC and secret scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            image: maminco/backend:local
+            scan: true
+          - service: migrate
+            image: maminco/backend-migrate:local
+            scan: false
+          - service: frontend
+            image: maminco/frontend:local
+            scan: true
+          - service: ai
+            image: maminco/ai:local
+            scan: true
+    defaults:
+      run:
+        working-directory: maminco-infra
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: maminco-infra
+      - uses: actions/checkout@v7
+        with:
+          repository: ThonkasM/maminco-backend
+          path: maminco-backend
+          token: ${{ secrets.REPOS_READ_TOKEN || github.token }}
+      - uses: actions/checkout@v7
+        with:
+          repository: ThonkasM/maminco-frontend
+          path: maminco-frontend
+          token: ${{ secrets.REPOS_READ_TOKEN || github.token }}
+      - uses: actions/checkout@v7
+        with:
+          repository: ThonkasM/maminco-ai
+          path: maminco-ai
+          token: ${{ secrets.REPOS_READ_TOKEN || github.token }}
+
+      - name: Compose env with throwaway CI values
+        run: |
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "INTERNAL_SERVICE_TOKEN=$(openssl rand -hex 32)"
+            echo "AI_DB_PASSWORD=$(openssl rand -hex 16)"
+            echo "CORS_ORIGIN=http://localhost"
+            echo "NEXT_PUBLIC_API_URL=http://localhost"
+            echo "NEXT_PUBLIC_SOCKET_URL=http://localhost"
+            echo "NEXT_PUBLIC_SITE_URL=http://localhost"
+          } > .env
+
+      - name: Build image
+        run: docker compose build ${{ matrix.service }}
+
+      - name: Trivy image scan
+        if: matrix.scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: maminco-infra/.trivyignore
+
+  codeql-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: actions
+      - uses: github/codeql-action/analyze@v4

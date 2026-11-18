@@ -17,31 +17,38 @@ checked out as siblings; the Dockerfiles here only build them from outside.
 
 | Service | Port | Exposed |
 | ------- | ---- | ------- |
-| nginx | 80 (443 optional) | public |
+| nginx | 80 (redirect) / 443 (TLS) | public |
 | frontend | 3001 | internal |
 | backend | 3000 | internal (`/api/*`, `/socket.io`) |
 | ai | 8000 | internal |
 | postgres | 5432 | internal |
 
-Routes: `/` → frontend, `/api` → backend, `/socket.io` → backend (WebSocket).
+Routes: `/` → frontend, `/api` → backend (`/api/auth/` rate-limited), `/socket.io` → backend (WebSocket).
 
 ## Invariants
 
 - `INTERNAL_SERVICE_TOKEN` (backend) **==** `AI_INTERNAL_SERVICE_TOKEN` (ai).
 - `NEXT_PUBLIC_API_URL` / `NEXT_PUBLIC_SOCKET_URL` are **build-time** args and
   are **origins only** (no trailing slash, no `/api`).
-- Postgres schema bootstrap uses `prisma migrate deploy` (migrations are
-  committed); seed (`prisma db seed`) must stay idempotent.
+- Schema bootstrap is the one-shot `migrate` compose service
+  (`prisma migrate deploy`); the seed only runs with `SEED=true`.
+- Secrets have no defaults in compose (`${VAR:?...}`); `.env.example` leaves them
+  empty. Never add a fallback value.
+- `docker/*.Dockerfile` are the single source of truth (maminco-ai has none);
+  keep a sibling `<name>.Dockerfile.dockerignore` next to each.
+- `postgres` and `ai` are on the internal-only network; keep the memory limits
+  within the 2 GiB budget (docs/ARCHITECTURE.md).
 - Container logs use the `json-file` driver with rotation (`10m` × `3`); the
   backend additionally persists app logs to Postgres with a 3-day retention.
   See `docs/LOGGING.md`.
-- Frontend requires a Node server (middleware); it is **not** static.
+- Frontend requires a Node server (middleware, `output: 'standalone'`); it is **not** static.
 
 ## Commands
 
 ```bash
-make up            # start stack          make down        # stop stack
-make rebuild       # rebuild + recreate   make seed        # run prisma seed
+make up            # start stack (TLS)   make down        # stop stack
+make up-dev        # HTTP-only stack
+make rebuild       # rebuild + recreate   make seed        # migrate + seed (test data)
 make logs SERVICE=backend
 make tf-up         # terraform apply      make tf-destroy  # terraform destroy
 ```
@@ -49,7 +56,7 @@ make tf-up         # terraform apply      make tf-destroy  # terraform destroy
 Validate before committing:
 
 ```bash
-docker compose config --quiet          # compose syntax (no daemon needed)
+docker compose --env-file <test.env> config --quiet   # needs all mandatory secrets set
 terraform -chdir=terraform fmt -check  # formatting
 terraform -chdir=terraform validate    # config validity (after init)
 ```

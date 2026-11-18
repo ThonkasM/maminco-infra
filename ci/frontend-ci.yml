@@ -3,6 +3,10 @@
 # =============================================================================
 #   mkdir -p ../maminco-frontend/.github/workflows
 #   cp ci/frontend-ci.yml ../maminco-frontend/.github/workflows/ci.yml
+#   cp ci/dependabot-frontend.yml ../maminco-frontend/.github/dependabot.yml
+#
+# The frontend must set `output: 'standalone'` in next.config.ts (the runtime
+# image copies .next/standalone).
 # =============================================================================
 name: CI
 
@@ -10,35 +14,88 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 concurrency:
   group: frontend-ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     env:
-      # Public values must be present at build time (Next.js inlines them).
       NEXT_PUBLIC_API_URL: http://localhost:3000
       NEXT_PUBLIC_SOCKET_URL: http://localhost:3000
+      NEXT_PUBLIC_SITE_URL: http://localhost:3001
       NEXT_TELEMETRY_DISABLED: "1"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
-      - name: Lint
-        run: npm run lint
+  trivy-fs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
 
-      - name: Build
-        run: npm run build
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Checkout infra repo (single source of the Dockerfile)
+        uses: actions/checkout@v7
+        with:
+          repository: ThonkasM/maminco-infra
+          path: infra
+          token: ${{ secrets.REPOS_READ_TOKEN || github.token }}
+      - uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: infra/docker/frontend.Dockerfile
+          config: infra/.hadolint.yaml
+      - name: Build image
+        run: docker build -f infra/docker/frontend.Dockerfile -t maminco/frontend:ci .
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: maminco/frontend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+
+  codeql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v4
