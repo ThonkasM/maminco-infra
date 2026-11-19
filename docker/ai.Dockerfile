@@ -8,12 +8,11 @@
 # so no compiler toolchain is installed.
 #
 # Base image pinning: the tag is fixed. To pin by digest as well, pass
-#   --build-arg PYTHON_DIGEST=sha256:<digest>
+#   --build-arg PYTHON_IMAGE=python:<tag>@sha256:<digest>
 # =============================================================================
-ARG PYTHON_VERSION=3.12.12-slim-bookworm
-ARG PYTHON_DIGEST=
+ARG PYTHON_IMAGE=python:3.12.12-slim-bookworm
 
-FROM python:${PYTHON_VERSION}${PYTHON_DIGEST:+@${PYTHON_DIGEST}} AS builder
+FROM ${PYTHON_IMAGE} AS builder
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 RUN python -m venv /opt/venv
@@ -21,7 +20,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt ./
 RUN pip install --only-binary=:all: -r requirements.txt
 
-FROM python:${PYTHON_VERSION}${PYTHON_DIGEST:+@${PYTHON_DIGEST}} AS runtime
+FROM ${PYTHON_IMAGE} AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \

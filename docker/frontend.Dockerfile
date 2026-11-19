@@ -9,12 +9,11 @@
 # must be origins only (no trailing slash, no /api).
 #
 # Base image pinning: the tag is fixed. To pin by digest as well, pass
-#   --build-arg NODE_DIGEST=sha256:<digest>
+#   --build-arg NODE_IMAGE=node:<tag>@sha256:<digest>
 # =============================================================================
-ARG NODE_VERSION=22.22-alpine3.23
-ARG NODE_DIGEST=
+ARG NODE_IMAGE=node:22.22-alpine3.23
 
-FROM node:${NODE_VERSION}${NODE_DIGEST:+@${NODE_DIGEST}} AS base
+FROM ${NODE_IMAGE} AS base
 WORKDIR /app
 RUN apk add --no-cache libc6-compat tini
 

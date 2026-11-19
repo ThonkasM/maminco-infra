@@ -98,7 +98,7 @@ Compose builds each app with `context: ../maminco-<app>` and the Dockerfile
 from `docker/` in this repo. Each Dockerfile has a sibling
 `<Dockerfile>.dockerignore` that BuildKit applies automatically to the context,
 so nothing has to be copied into the app repos. Base images use fixed tags;
-pass `--build-arg NODE_DIGEST=sha256:...` (or `PYTHON_DIGEST`) to pin a digest.
+pass `--build-arg NODE_IMAGE=node:<tag>@sha256:...` (or `PYTHON_IMAGE`) to pin a digest.
 
 Open <http://localhost>. The first admin user is created with
 `POST /api/auth/register-first-admin` (only works while no users exist).
