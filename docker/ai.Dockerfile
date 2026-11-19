@@ -28,6 +28,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     AI_MODEL_DIR=/app/data/models
 WORKDIR /app
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends tini \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --no-create-home appuser \

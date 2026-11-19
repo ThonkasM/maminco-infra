@@ -17,7 +17,7 @@ ARG NODE_IMAGE=node:22.22-alpine3.23
 
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
-RUN apk add --no-cache openssl tini
+RUN apk upgrade --no-cache && apk add --no-cache openssl tini
 
 FROM base AS deps
 COPY package.json package-lock.json ./
@@ -40,6 +40,8 @@ ENTRYPOINT ["/sbin/tini", "-s", "--"]
 CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && if [ \"$SEED\" = \"true\" ]; then node_modules/.bin/prisma db seed; fi"]
 
 FROM base AS runtime
+# The npm CLI bundled in the base image is not needed at runtime and carries its own advisories.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 ENV NODE_ENV=production \
     PORT=3000
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules

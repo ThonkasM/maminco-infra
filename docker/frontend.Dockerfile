@@ -15,7 +15,7 @@ ARG NODE_IMAGE=node:22.22-alpine3.23
 
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
-RUN apk add --no-cache libc6-compat tini
+RUN apk upgrade --no-cache && apk add --no-cache libc6-compat tini
 
 FROM base AS deps
 COPY package.json package-lock.json ./
@@ -33,6 +33,8 @@ COPY . .
 RUN npm run build
 
 FROM base AS runtime
+# The npm CLI bundled in the base image is not needed at runtime and carries its own advisories.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3001 \
