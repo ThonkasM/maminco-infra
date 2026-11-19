@@ -13,6 +13,7 @@
 ARG PYTHON_IMAGE=python:3.12.12-slim-bookworm
 
 FROM ${PYTHON_IMAGE} AS builder
+WORKDIR /build
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 RUN python -m venv /opt/venv
